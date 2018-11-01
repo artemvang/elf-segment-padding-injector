@@ -9,6 +9,6 @@ infector: infector.c
 	gcc -o infector infector.c
 
 test: test.c
-	gcc -o test test.c
+	gcc -o test test.c -g
 
 .PHONY: payload test infector

