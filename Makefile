@@ -1,9 +1,9 @@
+PAYLOADS = payloads/fork_ncat_server payloads/hello_world
 
-build_all: payload infector example
+all: $(PAYLOADS) infector example
 
-
-payload: payload.asm
-	nasm -f elf64 -o payload.o payload.asm && ld -o payload payload.o
+$(PAYLOADS): %: %.asm
+	nasm -f elf64 -o payloads/tmp.o $< && ld -o $@ payloads/tmp.o && rm payloads/tmp.o
 
 infector: infector.c
 	gcc -o infector infector.c
@@ -12,6 +12,6 @@ example: example.c
 	gcc -o example example.c
 
 clean:
-	rm *.o; rm payload infector example
+	rm infector example; rm $(PAYLOADS)
 
-.PHONY: payload example infector clean
+.PHONY: $(PAYLOADS) example infector clean
