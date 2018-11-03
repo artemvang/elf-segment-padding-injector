@@ -38,8 +38,8 @@ elf_stat* load_elf(char* file_name) {
 
     fd = open(file_name, O_RDWR, 0);
     if (fd < 0) {
-        fprintf(stderr, "Error on opening %s\n", file_name);
-        exit(1);
+        perror(file_name);
+        exit(EXIT_FAILURE);
     }
 
     fstat(fd, &file_info);
@@ -51,8 +51,8 @@ elf_stat* load_elf(char* file_name) {
                MAP_SHARED, fd, 0);
     if (ehdr == MAP_FAILED) {
         close(fd);
-        fprintf(stderr, "Error on file %s mapping\n", file_name);
-        exit(1);
+        perror(file_name);
+        exit(EXIT_FAILURE);
     }
 
     if (ehdr->e_ident[0] != 0x7f && strcmp(&ehdr->e_ident[1], "ELF")) {
